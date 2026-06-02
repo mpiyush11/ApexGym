@@ -1,0 +1,58 @@
+rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────────────────
+// GymOS — Firebase Storage Rules (audit 7.2)
+//
+// Member photos, gallery images and generated ID cards live under tenant
+// paths: gym_profiles/{gym_profile_id}/...  Access mirrors Firestore roles
+// via custom claims. Default deny; uploads validated for type + size.
+// ─────────────────────────────────────────────────────────────────────────
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() { return request.auth != null; }
+    function claims() { return request.auth.token; }
+    function inTenant(gpid) {
+      return isSignedIn() && claims().gym_profile_id == gpid;
+    }
+    function isOwnerOf(gpid) { return inTenant(gpid) && claims().role == 'owner'; }
+    function isStaffOf(gpid) {
+      return inTenant(gpid) && (claims().role == 'owner' || claims().role == 'reception');
+    }
+    function isPlatformAdmin() {
+      return isSignedIn() && claims().role == 'platform_admin';
+    }
+
+    function isImage() {
+      return request.resource.contentType.matches('image/.*');
+    }
+    function underMaxSize() {
+      return request.resource.size < 5 * 1024 * 1024; // 5 MB cap
+    }
+
+    // Member photos — staff upload; readable by tenant users.
+    match /gym_profiles/{gpid}/members/{memberId}/{fileName} {
+      allow read: if isPlatformAdmin() || inTenant(gpid);
+      allow write: if (isPlatformAdmin() || isStaffOf(gpid)) && isImage() && underMaxSize();
+    }
+
+    // Gallery images — owner uploads (CMS). Read by tenant users; public
+    // gallery is served via signed/CDN URLs from the server.
+    match /gym_profiles/{gpid}/gallery/{fileName} {
+      allow read: if isPlatformAdmin() || inTenant(gpid);
+      allow write: if (isPlatformAdmin() || isOwnerOf(gpid)) && isImage() && underMaxSize();
+    }
+
+    // Generated ID cards / receipts — written server-side (Admin SDK).
+    match /gym_profiles/{gpid}/cards/{fileName} {
+      allow read: if isPlatformAdmin() || inTenant(gpid);
+      allow write: if isPlatformAdmin();
+    }
+
+    // Default deny.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

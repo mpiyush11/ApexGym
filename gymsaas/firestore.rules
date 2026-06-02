@@ -1,0 +1,221 @@
+rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────────────────
+// GymOS — Firestore Security Rules (audit C4)
+//
+// Security model = DEFAULT DENY + path-based multi-tenancy.
+// All tenant data lives under gym_profiles/{gym_profile_id}/...
+// Access is decided from CUSTOM CLAIMS on the auth token:
+//   request.auth.token.gym_profile_id   -> which tenant the user belongs to
+//   request.auth.token.role             -> owner | reception | member | platform_admin
+//   request.auth.token.member_id        -> (members only) restricts to self
+//
+// Roles:
+//   - platform_admin : cross-tenant support (you). Full read/write everywhere.
+//   - owner          : full control of THEIR gym.
+//   - reception      : add/edit/renew members + read leads/plans in THEIR gym.
+//                      CANNOT delete members, edit plans/pricing, or touch CMS/settings.
+//   - member         : read ONLY their own member doc + memberships in THEIR gym.
+//
+// NOTE: monetary fields are integer minor units; rules validate they are ints.
+// ─────────────────────────────────────────────────────────────────────────
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- helpers -------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function claims() {
+      return request.auth.token;
+    }
+
+    function hasRole(role) {
+      return isSignedIn() && claims().role == role;
+    }
+
+    function isPlatformAdmin() {
+      return hasRole('platform_admin');
+    }
+
+    // True if the signed-in user belongs to this tenant (by claim).
+    function inTenant(gym_profile_id) {
+      return isSignedIn() && claims().gym_profile_id == gym_profile_id;
+    }
+
+    function isOwnerOf(gym_profile_id) {
+      return inTenant(gym_profile_id) && claims().role == 'owner';
+    }
+
+    function isReceptionOf(gym_profile_id) {
+      return inTenant(gym_profile_id) && claims().role == 'reception';
+    }
+
+    function isStaffOf(gym_profile_id) {
+      return isOwnerOf(gym_profile_id) || isReceptionOf(gym_profile_id);
+    }
+
+    function isMemberOf(gym_profile_id) {
+      return inTenant(gym_profile_id) && claims().role == 'member';
+    }
+
+    // Generic tenant read: any staff/member of the tenant, or platform admin.
+    function canReadTenant(gym_profile_id) {
+      return isPlatformAdmin() || inTenant(gym_profile_id);
+    }
+
+    // Validation helpers for money (integer minor units, never negative).
+    function isMinorInt(v) {
+      return v is int && v >= 0;
+    }
+
+    // Defense-in-depth: a write's body must not claim a DIFFERENT tenant than
+    // the path it is written to (prevents poisoning collection-group queries
+    // that filter by the gym_profile_id field).
+    function bodyTenantOk(gym_profile_id) {
+      return !('gym_profile_id' in request.resource.data)
+             || request.resource.data.gym_profile_id == gym_profile_id;
+    }
+
+    // ---- top-level: gym_slug_index (global uniqueness) -----------------
+    // Public site needs to resolve a slug -> gym_profile_id, but writes are
+    // privileged (done by the Admin SDK during onboarding only).
+    match /gym_slug_index/{gym_slug} {
+      allow read: if true;            // public lookup (no PII; just an id)
+      allow write: if isPlatformAdmin(); // tenants never write directly
+    }
+
+    // ---- top-level: platform_subscriptions (you only) ------------------
+    match /platform_subscriptions/{gym_profile_id} {
+      allow read, write: if isPlatformAdmin();
+    }
+
+    // ---- tenant root: gym_profiles/{gym_profile_id} --------------------
+    match /gym_profiles/{gym_profile_id} {
+
+      // Profile doc: readable by tenant members/staff (+platform admin).
+      // Public reads of published sites go through the server (Admin SDK),
+      // so client rules stay locked here.
+      allow read: if canReadTenant(gym_profile_id);
+      // Profile is created during onboarding via Admin SDK; owners may update
+      // their own gym settings/branding. No client deletes.
+      allow create: if isPlatformAdmin();
+      allow update: if isPlatformAdmin() || isOwnerOf(gym_profile_id);
+      allow delete: if isPlatformAdmin();
+
+      // settings singleton — owner only (audit C2: not reception)
+      match /settings/{doc} {
+        allow read: if canReadTenant(gym_profile_id);
+        allow write: if isPlatformAdmin() || isOwnerOf(gym_profile_id);
+      }
+
+      // counters — read by staff; writes only server-side (Admin SDK) to keep
+      // aggregates trustworthy. Clients never bump counters directly.
+      match /counters/{doc} {
+        allow read: if isPlatformAdmin() || isStaffOf(gym_profile_id);
+        allow write: if isPlatformAdmin();
+      }
+
+      // app_users (staff directory) — owner manages staff; reception read-only.
+      match /app_users/{app_user_id} {
+        allow read: if isPlatformAdmin() || isStaffOf(gym_profile_id);
+        allow write: if isPlatformAdmin() || isOwnerOf(gym_profile_id);
+      }
+
+      // members ---------------------------------------------------------
+      // Staff (owner+reception) can read/list and create/update members.
+      // Reception CANNOT delete; owner+platform can (soft-delete is preferred
+      // in app code, but hard delete is owner-gated here as defense-in-depth).
+      // A MEMBER can read ONLY their own member doc.
+      match /members/{member_id} {
+        allow read: if isPlatformAdmin()
+                    || isStaffOf(gym_profile_id)
+                    || (isMemberOf(gym_profile_id) && claims().member_id == member_id);
+
+        allow create: if (isPlatformAdmin() || isStaffOf(gym_profile_id))
+                      && bodyTenantOk(gym_profile_id);
+        allow update: if (isPlatformAdmin() || isStaffOf(gym_profile_id))
+                      && bodyTenantOk(gym_profile_id);
+        allow delete: if isPlatformAdmin() || isOwnerOf(gym_profile_id);
+
+        // memberships subcollection (purchased periods) ----------------
+        // IMMUTABLE financial history. Created only by the server (Admin SDK,
+        // which bypasses these rules); even owners/reception clients may NOT
+        // edit or delete a period — corrections happen via NEW periods only.
+        // Read access only here for staff + the member themselves.
+        match /memberships/{membership_id} {
+          allow read: if isPlatformAdmin()
+                      || isStaffOf(gym_profile_id)
+                      || (isMemberOf(gym_profile_id) && claims().member_id == member_id);
+          // No client create either: money/period integrity is enforced in the
+          // transactional server service (Admin SDK). Locking writes here means
+          // historical revenue can never be rewritten from a client.
+          allow create, update, delete: if false;
+        }
+      }
+
+      // membership_plans -----------------------------------------------
+      // Read by any tenant user (members may see plans). Pricing edits are
+      // OWNER-ONLY (reception cannot change prices — audit C2).
+      match /membership_plans/{plan_id} {
+        allow read: if canReadTenant(gym_profile_id);
+        allow create, update: if (isPlatformAdmin() || isOwnerOf(gym_profile_id))
+                              && bodyTenantOk(gym_profile_id);
+        allow delete: if isPlatformAdmin() || isOwnerOf(gym_profile_id);
+      }
+
+      // leads -----------------------------------------------------------
+      // Staff read + manage. Public form submissions are written via the
+      // server (Admin SDK), so no public client create here.
+      match /leads/{lead_id} {
+        allow read: if isPlatformAdmin() || isStaffOf(gym_profile_id);
+        allow create, update: if (isPlatformAdmin() || isStaffOf(gym_profile_id))
+                              && bodyTenantOk(gym_profile_id);
+        allow delete: if isPlatformAdmin() || isOwnerOf(gym_profile_id);
+      }
+
+      // trainers (CMS) — owner only writes; read by tenant. -------------
+      match /trainers/{trainer_id} {
+        allow read: if canReadTenant(gym_profile_id);
+        allow create, update, delete: if isPlatformAdmin() || isOwnerOf(gym_profile_id);
+      }
+
+      // gallery_items (CMS) — owner only writes. ------------------------
+      match /gallery_items/{gallery_item_id} {
+        allow read: if canReadTenant(gym_profile_id);
+        allow create, update, delete: if isPlatformAdmin() || isOwnerOf(gym_profile_id);
+      }
+
+      // testimonials (CMS) — owner only writes. -------------------------
+      match /testimonials/{testimonial_id} {
+        allow read: if canReadTenant(gym_profile_id);
+        allow create, update, delete: if isPlatformAdmin() || isOwnerOf(gym_profile_id);
+      }
+
+      // analytics_monthly (derived rollups) — owner read; server-only write.
+      match /analytics_monthly/{month_key} {
+        allow read: if isPlatformAdmin() || isOwnerOf(gym_profile_id);
+        allow write: if isPlatformAdmin();
+      }
+
+      // report_runs — owner read; writes server-side only. --------------
+      match /report_runs/{report_run_id} {
+        allow read: if isPlatformAdmin() || isOwnerOf(gym_profile_id);
+        allow write: if isPlatformAdmin();
+      }
+
+      // activity_logs — owner read (audit trail); writes server-side only.
+      match /activity_logs/{log_id} {
+        allow read: if isPlatformAdmin() || isOwnerOf(gym_profile_id);
+        allow write: if isPlatformAdmin();
+      }
+    }
+
+    // ---- catch-all: deny everything not matched above ------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

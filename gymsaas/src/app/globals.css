@@ -1,0 +1,95 @@
+@import "tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────
+   GymOS Design Tokens — premium, elegant, mobile-first.
+   Inline styles/tokens so the sandboxed preview renders fully
+   (no external fonts/CSS required).
+   ───────────────────────────────────────────────────────────── */
+:root {
+  /* Surfaces */
+  --background: #0b0f17;        /* deep luxury charcoal */
+  --surface: #121826;
+  --surface-2: #1a2233;
+  --surface-border: #263041;
+  --foreground: #eef2f8;
+  --muted: #aab4c4; /* WCAG-AA contrast on --surface, incl. small text */
+
+  /* Brand (tasteful gold accent on dark) */
+  --brand: #d4af37;            /* luxury gold */
+  --brand-strong: #c39e2c;
+  --brand-contrast: #0b0f17;
+
+  /* Semantic */
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --info: #60a5fa;
+
+  /* Radius & shadow */
+  --radius: 0.875rem;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-md: 0 8px 24px rgba(0,0,0,0.35);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-border: var(--surface-border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-contrast: var(--brand-contrast);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --radius-card: var(--radius);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+* { -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  max-width: 100%;
+  overflow-x: hidden; /* MANDATORY: no horizontal scroll, any breakpoint */
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Tasteful, minimal motion — respect reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0% { background-position: -468px 0; }
+  100% { background-position: 468px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 25%, #222c40 50%, var(--surface-2) 75%);
+  background-size: 936px 100%;
+  animation: shimmer 1.4s linear infinite;
+  border-radius: 0.5rem;
+}
+
+/* Subtle fade-in for premium feel */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up { animation: fadeInUp 0.4s ease-out both; }
+
+/* Safe-area padding for mobile bottom nav (notched devices) */
+.pb-safe { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 4.5rem); }

@@ -1,0 +1,50 @@
+{
+  "indexes": [
+    {
+      "comment": "Members list: active (non-archived) members, newest first. Matches listMembers() + members CSV export.",
+      "collectionGroup": "members",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "is_archived", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "comment": "Members CSV export streams active members oldest-first (created_at ASC).",
+      "collectionGroup": "members",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "is_archived", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "comment": "Expiring worklist: active members filtered by status (in expiring_soon/expired). Matches listExpiringMembers().",
+      "collectionGroup": "members",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "is_archived", "order": "ASCENDING" },
+        { "fieldPath": "member_status_key", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "comment": "Lead pipeline filtered by status, newest first. Matches listLeads(status).",
+      "collectionGroup": "leads",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "lead_status_key", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "comment": "Analytics rebuild + weekly report + payments CSV export: membership periods for a tenant, ordered by created_at (collection-group).",
+      "collectionGroup": "memberships",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "gym_profile_id", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
