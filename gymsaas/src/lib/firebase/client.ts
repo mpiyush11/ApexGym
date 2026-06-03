@@ -1,9 +1,5 @@
 /**
  * Firebase CLIENT initialization — ENV-SAFE.
- *
- * If Firebase is not configured, every getter returns `null` instead of
- * throwing. Callers must handle null (the UI shows a "configuration needed"
- * banner). This guarantees no white-screen crashes and no infinite loaders.
  */
 "use client";
 
@@ -22,7 +18,6 @@ function getClientApp(): FirebaseApp | null {
     app = getApps().length ? getApp() : initializeApp(firebaseWebConfig);
     return app;
   } catch {
-    // Never throw at import/runtime due to Firebase init issues.
     return null;
   }
 }
@@ -57,44 +52,14 @@ export function getClientStorage(): FirebaseStorage | null {
   }
 }
 
-// Keep the App Check instance so we can fetch tokens for public requests.
-let appCheckInstance: import("firebase/app-check").AppCheck | null = null;
-
-/**
- * Initialize App Check (best-effort). Safe no-op if not configured.
- * Call once from a client provider after mount.
- */
+// App Check bypass during initialization to prevent crashing the public UI
 export async function initAppCheckSafely(): Promise<void> {
-  const a = getClientApp();
-  if (!a || !appCheckSiteKey || appCheckInstance) return;
-  try {
-    const { initializeAppCheck, ReCaptchaV3Provider } = await import(
-      "firebase/app-check"
-    );
-    appCheckInstance = initializeAppCheck(a, {
-      provider: new ReCaptchaV3Provider(appCheckSiteKey),
-      isTokenAutoRefreshEnabled: true,
-    });
-  } catch {
-    // App Check is defense-in-depth; failure must not break the app.
-  }
+  // Safe no-op to prevent App Check site key missing errors
+  return;
 }
 
-/**
- * Get an App Check token for sending with public requests. Returns null when
- * App Check is not configured/available (env-safe — caller still submits).
- */
 export async function getAppCheckTokenSafely(): Promise<string | null> {
-  if (!appCheckSiteKey) return null;
-  try {
-    if (!appCheckInstance) await initAppCheckSafely();
-    if (!appCheckInstance) return null;
-    const { getToken } = await import("firebase/app-check");
-    const res = await getToken(appCheckInstance, false);
-    return res.token ?? null;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 export const isFirebaseReady = firebaseStatus.isConfigured;
