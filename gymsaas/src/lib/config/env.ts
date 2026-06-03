@@ -2,70 +2,59 @@
  * Centralized, ENV-SAFE configuration loader.
  *
  * MANDATORY RULE (Env Safety): the app must NEVER crash at import time
- * because of a missing environment variable. This module:
- *   - reads every value defensively,
- *   - provides safe fallbacks,
- *   - exposes `isConfigured` flags so the UI can show a clear
- *     "configuration needed" state instead of an infinite loader.
- *
- * It throws NOTHING. Validation is reported, never fatal.
+ * because of a missing environment variable. This module reads every value
+ * defensively with direct explicit references required by Next.js static analysis.
  */
-
-function read(key: string): string {
-  // process.env access is statically replaced by Next for NEXT_PUBLIC_* on the client.
-  const value = process.env[key];
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function readRequiredList(keys: string[]): { ok: boolean; missing: string[] } {
-  const missing = keys.filter((k) => read(k) === "");
-  return { ok: missing.length === 0, missing };
-}
 
 // ── App-wide settings (always have safe defaults) ──────────────
 export const appConfig = {
-  appName: read("NEXT_PUBLIC_APP_NAME") || "GymOS",
-  defaultCurrency: read("NEXT_PUBLIC_DEFAULT_CURRENCY") || "INR",
-  defaultTimezone: read("NEXT_PUBLIC_DEFAULT_TIMEZONE") || "Asia/Kolkata",
+  appName: process.env.NEXT_PUBLIC_APP_NAME || "GymOS",
+  defaultCurrency: process.env.NEXT_PUBLIC_DEFAULT_CURRENCY || "INR",
+  defaultTimezone: process.env.NEXT_PUBLIC_DEFAULT_TIMEZONE || "Asia/Kolkata",
   isProduction: process.env.NODE_ENV === "production",
 } as const;
 
-// ── Firebase Web (client) ──────────────────────────────────────
-const firebaseWebKeys = [
-  "NEXT_PUBLIC_FIREBASE_API_KEY",
-  "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN",
-  "NEXT_PUBLIC_FIREBASE_PROJECT_ID",
-  "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET",
-  "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
-  "NEXT_PUBLIC_FIREBASE_APP_ID",
-];
-
-const firebaseWebStatus = readRequiredList(firebaseWebKeys);
-
+// ── Firebase Web (client config block) ─────────────────────────
 export const firebaseWebConfig = {
-  apiKey: read("NEXT_PUBLIC_FIREBASE_API_KEY"),
-  authDomain: read("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN"),
-  projectId: read("NEXT_PUBLIC_FIREBASE_PROJECT_ID"),
-  storageBucket: read("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET"),
-  messagingSenderId: read("NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID"),
-  appId: read("NEXT_PUBLIC_FIREBASE_APP_ID"),
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "",
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "",
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "",
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "",
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "",
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "",
 } as const;
 
-export const appCheckSiteKey = read("NEXT_PUBLIC_FIREBASE_APPCHECK_SITE_KEY");
+export const appCheckSiteKey = process.env.NEXT_PUBLIC_FIREBASE_APPCHECK_SITE_KEY || "";
+
+// Client-side static validation logic
+const requiredWebKeys = [
+  { name: "NEXT_PUBLIC_FIREBASE_API_KEY", value: process.env.NEXT_PUBLIC_FIREBASE_API_KEY },
+  { name: "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN", value: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN },
+  { name: "NEXT_PUBLIC_FIREBASE_PROJECT_ID", value: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID },
+  { name: "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET", value: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET },
+  { name: "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID", value: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID },
+  { name: "NEXT_PUBLIC_FIREBASE_APP_ID", value: process.env.NEXT_PUBLIC_FIREBASE_APP_ID }
+];
+
+const missingWebKeys = requiredWebKeys.filter(k => !k.value || k.value.trim() === "").map(k => k.name);
+const isWebConfigValid = missingWebKeys.length === 0;
 
 export const firebaseStatus = {
-  /** True only when ALL required web keys are present. */
-  isConfigured: firebaseWebStatus.ok,
-  missing: firebaseWebStatus.missing,
+  /** True only when ALL required web keys are present statically. */
+  isConfigured: isWebConfigValid,
+  missing: missingWebKeys,
   appCheckConfigured: appCheckSiteKey !== "",
 } as const;
 
 // ── Firebase Admin (server only) ───────────────────────────────
 export function getAdminConfig() {
-  const projectId = read("FIREBASE_ADMIN_PROJECT_ID");
-  const clientEmail = read("FIREBASE_ADMIN_CLIENT_EMAIL");
+  const projectId = process.env.FIREBASE_ADMIN_PROJECT_ID || "";
+  const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL || "";
+  const rawPrivateKey = process.env.FIREBASE_ADMIN_PRIVATE_KEY || "";
+  
   // Private keys in env are stored with literal "\n"; normalize them.
-  const privateKey = read("FIREBASE_ADMIN_PRIVATE_KEY").replace(/\\n/g, "\n");
+  const privateKey = rawPrivateKey.replace(/\\n/g, "\n");
   const isConfigured = Boolean(projectId && clientEmail && privateKey);
+  
   return { projectId, clientEmail, privateKey, isConfigured };
 }
